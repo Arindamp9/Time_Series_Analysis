@@ -1,0 +1,209 @@
+---
+title: "Time Series Assignment 1"
+author: "Arindam Patra"
+date: "03/11/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+# Importing libraries
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, tidy = TRUE)
+library(tseries)
+library(forecast)
+library(moments)
+```
+# Importing Data
+**Monthly Electric Production data from 1985-2017**
+```{r}
+df <- read.csv("time_series/Electric_Production.csv",row.names="DATE")
+data = ts(df)
+Time <- as.Date(rownames(df),'%m/%d/%Y')
+
+plot(Time ,data, xlab = 'Date',ylab = 'Electric Production',
+     main = 'Electric Production vs Time', type = 'l')
+```
+
+# Descriptive Statistics
+```{r}
+
+m = mean(data)
+s = sd(data)
+print(paste("Minimum = ", min(data)))
+print(paste("Maximum = ", max(data)))
+print(paste("Range = ", max(data) - min(data)))
+print(paste("Mean = ", m))
+print(paste("Standard deviation = ", s))
+print(paste("1st Quartile = ", quantile(data, 0.25)))
+print(paste("2nd Quartile (Median) = ", quantile(data, 0.5)))
+print(paste("3rd Quartile = ", quantile(data, 0.75)))
+print(paste("Inter quartile range = ", IQR(data)))
+print(paste("Skewness = ", skewness(data)))
+print(paste("Kurtosis = ", kurtosis(data)))
+x = round(((length(data[data > m - (3 * s) & data < m + (3 * s)]) * 100)/length(data)),
+          3)
+print(paste("Percentage of observations in 3-sigma deviation of the mean = ", x, "%"))
+
+```
+**Since all the data lies between 3 SD, so the data doesn't have any outlier.**
+
+# Stationarity Test
+**Let's test the stationarity of this time series. We will test it using 3 tests - ADF, KPSS and PP Test.**
+```{r}
+adf = adf.test(data)
+adf
+```
+```{r}
+kpss = kpss.test(data)
+kpss
+```
+```{r}
+pp = PP.test(data)
+pp
+```
+**Here ADF and PP test are agreed for stationarity of this data but KPSS is saying non-stationary. So let's do the first difference of the data.**
+
+# First Difference
+
+```{r}
+first_diff <- diff(data)
+plot(Time[-1],first_diff, xlab = 'Date',ylab = 'Electric Production',
+     main = 'First Difference of the Time Series',type = 'l')
+```
+
+```{r}
+adf = adf.test(first_diff)
+adf
+```
+
+```{r}
+kpss = kpss.test(first_diff)
+kpss
+```
+
+```{r}
+pp = PP.test(first_diff)
+pp
+```
+**Ok! Here all of them agrees with the stationarity of this time series data. Therefore we can fit this data to our model.** 
+
+# Train test split
+**Keeping last 20 observations as test data and rest of them as train data.**
+```{r}
+test_size <- 20
+n <- length(first_diff)
+train_size <- n - test_size
+
+train_data <- first_diff[c(1 : train_size)]
+test_data <- first_diff[c((train_size+1) : n)]
+```
+
+```{r}
+### Total data points
+length(first_diff)
+```
+```{r}
+### Training Data Size
+length(train_data)
+```
+```{r}
+### Test Data Size
+length(test_data)
+```
+
+
+# Modelling
+**At first we will build two optimized model. 1 - Using AIC, 2 - Using BIC**
+
+### Using AIC
+
+```{r}
+aic_model <- auto.arima(train_data, trace= TRUE,d= 0, max.p = 10, max.q = 10, 
+                        ic ="aic", approximation = FALSE)
+aic_model
+```
+**For AIC, Best model is ARMA(5,2).**
+
+### Using BIC
+```{r}
+bic_model <- auto.arima(train_data, trace= TRUE,d=0, max.p = 10, max.q = 10, 
+                        ic ="bic", approximation = FALSE)
+bic_model
+```
+**For BIC, Best model is ARMA(4,0).**
+
+# Choosing BEST Model
+**We will check MSE for both of these models. For whichever model the MSE is lowest, we will choose that.**
+```{r}
+pred_aic<- forecast(aic_model, h = 20)
+aic_forecast<- pred_aic$mean
+mse_aic = sum((test_data - aic_forecast)^2)/length(test_data)
+print(paste("MSE for AIC Model = ", mse_aic))
+```
+
+
+```{r}
+pred_bic <- forecast(bic_model, h = 20)
+bic_forecast<- pred_bic$mean
+mse_bic = sum((test_data - bic_forecast)^2)/length(test_data)
+print(paste("MSE for BIC Model = ", mse_bic))
+```
+**As we can see, MSE for AIC model is lowest. So we will choose that.**
+**Therefore ARMA(5,2) is the best model and we will forecast with respect to this model.**
+
+
+# Residuals
+```{r}
+checkresiduals(aic_model)
+```
+**We can see that residual follows almost a normal distribution which is a good sign for this model.**
+
+# Forecasting
+```{r}
+plot(forecast(aic_model,h=20),type='l')
+lines(c((train_size+1):n),test_data, col = 'black')
+
+```
+```{r}
+plot(Time[(train_size  +1): n],aic_forecast,type='l',col = 'red',
+     ylim = c(-15,20),xlab = 'Time',ylab = 'AIC Forecast',
+     main = 'Actual Data vs Forecast Data')
+
+lines(Time[(train_size+1):n],test_data, col = 'blue')
+legend('top', legend=c("Forecast", "Actual"),fill=c("red", "blue"), text.font=4)
+```
+
+# Inverse Transformation
+
+```{r}
+y_hat = rep(0, (length(test_data) + 1))
+y_hat[1] = data[(length(train_data))]
+for (i in 2:(length(test_data) + 1)) {
+  y_hat[i] = aic_forecast[i - 1] +  y_hat[i - 1] 
+}
+
+df_compare = data.frame(cbind(y_hat[2:(length(test_data) + 1)], data[c((train_size+2) : length(Time))]))
+## Took (train_size + 2), since in the main data we have one extra row, first one.
+colnames(df_compare) = c("Predicted", "Actual")
+df_compare
+```
+
+**Now let's plot it.**
+
+```{r}
+plot(Time[(train_size+2):length(Time)],df_compare$Predicted,type='l',col = 'red', ylim = c(80,130),
+     ylab = 'Eletric Production',xlab ='Time', 
+     main = 'Actual Data vs Forecast Data for Main Data')
+
+lines(Time[(train_size+2):length(Time)],df_compare$Actual, col = 'blue')
+legend('bottomright', legend=c("Forecast", "Actual"),fill = c("red", "blue"), text.font=4)
+```
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE)
+```
+
